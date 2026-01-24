@@ -28,8 +28,7 @@
 #include "credentials.h"
 
 
-// OpenWeatherMap settings
-const char* OWM_API_KEY = "YOUR_API_KEY_HERE";
+// OpenWeatherMap settings (API key in credentials.h)
 const char* LATITUDE = "-26.7984";
 const char* LONGITUDE = "153.1394";
 
@@ -50,7 +49,7 @@ const unsigned long DEBOUNCE_DELAY = 200;
 TFT_eSPI tft = TFT_eSPI();
 
 // Screen states
-enum Screen { SCREEN_HOURLY, SCREEN_CONDITIONS, SCREEN_DAILY, SCREEN_SETTINGS, SCREEN_ABOUT, SCREEN_DEMO, SCREEN_DEMO2, SCREEN_DEMO3 };
+enum Screen { SCREEN_HOURLY, SCREEN_HOURLY2, SCREEN_CONDITIONS, SCREEN_DAILY, SCREEN_SETTINGS, SCREEN_ABOUT, SCREEN_DEMO, SCREEN_DEMO2, SCREEN_DEMO3 };
 Screen currentScreen = SCREEN_HOURLY;  // Start on hourly forecast
 
 // Auto page switch
@@ -103,6 +102,7 @@ struct DailyData {
   float tempMax;
   int weatherCode;
   String dayName;
+  int pop;  // Probability of precipitation (0-100%)
 };
 
 struct WeatherData {
@@ -142,6 +142,7 @@ String lastUpdateTime = "";
 void connectToWiFi();
 void fetchOneCallData();
 void displayHourlyForecast();
+void displayHourlyForecast2();
 void displayConditions();
 void displayDailyForecast();
 void displaySettings();
@@ -205,7 +206,8 @@ void loop() {
   if (autoSwitch && millis() - lastPageSwitch >= PAGE_SWITCH_INTERVAL) {
     Screen nextScreen;
     switch (currentScreen) {
-      case SCREEN_HOURLY: nextScreen = SCREEN_CONDITIONS; break;
+      case SCREEN_HOURLY: nextScreen = SCREEN_HOURLY2; break;
+      case SCREEN_HOURLY2: nextScreen = SCREEN_CONDITIONS; break;
       case SCREEN_CONDITIONS: nextScreen = SCREEN_DAILY; break;
       case SCREEN_DAILY: nextScreen = SCREEN_SETTINGS; break;
       case SCREEN_SETTINGS: nextScreen = SCREEN_ABOUT; break;
@@ -333,10 +335,11 @@ void handleButtons() {
         }
       }
     } else {
-      // Weather mode: Hourly <-> Conditions <-> Daily
+      // Weather mode: Hourly <-> Hourly2 <-> Conditions <-> Daily
       if (leftPressed) {
         switch (currentScreen) {
-          case SCREEN_HOURLY: currentScreen = SCREEN_CONDITIONS; break;
+          case SCREEN_HOURLY: currentScreen = SCREEN_HOURLY2; break;
+          case SCREEN_HOURLY2: currentScreen = SCREEN_CONDITIONS; break;
           case SCREEN_CONDITIONS: currentScreen = SCREEN_DAILY; break;
           case SCREEN_DAILY: currentScreen = SCREEN_HOURLY; break;
           default: currentScreen = SCREEN_HOURLY; break;
@@ -344,7 +347,8 @@ void handleButtons() {
       } else {
         switch (currentScreen) {
           case SCREEN_HOURLY: currentScreen = SCREEN_DAILY; break;
-          case SCREEN_CONDITIONS: currentScreen = SCREEN_HOURLY; break;
+          case SCREEN_HOURLY2: currentScreen = SCREEN_HOURLY; break;
+          case SCREEN_CONDITIONS: currentScreen = SCREEN_HOURLY2; break;
           case SCREEN_DAILY: currentScreen = SCREEN_CONDITIONS; break;
           default: currentScreen = SCREEN_HOURLY; break;
         }
@@ -572,6 +576,7 @@ void fetchOneCallData() {
           weather.daily[i].tempMin = daily[i]["temp"]["min"];
           weather.daily[i].tempMax = daily[i]["temp"]["max"];
           weather.daily[i].weatherCode = daily[i]["weather"][0]["id"];
+          weather.daily[i].pop = (int)(daily[i]["pop"].as<float>() * 100);  // Convert 0-1 to 0-100%
           // Get day name from timestamp
           time_t ts = daily[i]["dt"];
           struct tm* timeinfo = localtime(&ts);
@@ -816,7 +821,7 @@ void drawWindArrow(int x, int y, int deg, int size) {
 // Draw screen indicator dots at bottom right
 void drawScreenIndicator() {
   int y = 222;
-  int numDots = settingsMode ? 5 : 3;
+  int numDots = settingsMode ? 5 : 4;
   int spacing = 15;
   int startX = 310 - (numDots - 1) * spacing;  // Right aligned
 
@@ -833,8 +838,9 @@ void drawScreenIndicator() {
   } else {
     switch (currentScreen) {
       case SCREEN_HOURLY: screenIndex = 0; break;
-      case SCREEN_CONDITIONS: screenIndex = 1; break;
-      case SCREEN_DAILY: screenIndex = 2; break;
+      case SCREEN_HOURLY2: screenIndex = 1; break;
+      case SCREEN_CONDITIONS: screenIndex = 2; break;
+      case SCREEN_DAILY: screenIndex = 3; break;
       default: screenIndex = 0; break;
     }
   }
@@ -1033,20 +1039,20 @@ void displayHourlyForecast() {
   tft.setTextColor(getTempColor(weather.temperature), COLOR_BG);
   tft.drawString(String(weather.temperature, 0), 85, 70);
 
-  // Condition text
-  tft.setTextFont(4);
+  // Condition text (smaller font if too long)
+  tft.setTextFont(weather.condition.length() > 12 ? 2 : 4);
   tft.setTextColor(COLOR_SUBTLE, COLOR_BG);
   tft.drawString(weather.condition, 160, 55);
 
   // Feels like
-  tft.drawString("Feels " + String(weather.apparent_temp, 0), 160, 90);
+  tft.drawString("Feels " + String(weather.apparent_temp, 0), 160, 85);
 
   // === HOURLY COLUMNS (skip hour 0, show hours 1-7) ===
   int displayCount = min(7, weather.hourlyCount - 1);
   int margin = 8;
   int availableWidth = 320 - (margin * 2);
   int spacing = availableWidth / displayCount;
-  int startY = 120;
+  int startY = 130;
 
   for (int i = 0; i < displayCount; i++) {
     int hourIndex = i + 1;  // Skip hour 0 (now)
@@ -1073,12 +1079,84 @@ void displayHourlyForecast() {
     tft.drawString(hourStr, x, startY);
 
     // Weather icon (smaller) - show moon at night
-    drawWeatherIcon(weather.hourly[hourIndex].weatherCode, x, startY + 35, 35, !hourIsDaytime);
+    drawWeatherIcon(weather.hourly[hourIndex].weatherCode, x, startY + 27, 35, !hourIsDaytime);
 
     // Temperature - color coded
     tft.setTextFont(2);
     tft.setTextColor(getTempColor(weather.hourly[hourIndex].temperature), COLOR_BG);
-    tft.drawString(String(weather.hourly[hourIndex].temperature, 0), x, startY + 65);
+    tft.drawString(String(weather.hourly[hourIndex].temperature, 0), x, startY + 55);
+  }
+
+  // Footer and screen indicator
+  drawFooter();
+  drawScreenIndicator();
+}
+
+void displayHourlyForecast2() {
+  tft.fillScreen(COLOR_BG);
+
+  if (!weather.dataValid || weather.hourlyCount < 14) {
+    displayError("No Hourly Data!");
+    return;
+  }
+
+  drawHeader();
+
+  // === TOP SECTION: Rain chance for today ===
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextFont(4);
+  tft.setTextColor(COLOR_SUBTLE, COLOR_BG);
+  tft.drawString("Rain Today", 10, 55);
+
+  // Rain percentage with droplet icon
+  int rainX = 200;
+  int rainY = 65;
+  tft.fillCircle(rainX, rainY + 5, 12, COLOR_RAIN);
+  tft.fillTriangle(rainX - 12, rainY + 5, rainX + 12, rainY + 5, rainX, rainY - 15, COLOR_RAIN);
+
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextFont(7);
+  int rainChance = weather.daily[0].pop;
+  tft.setTextColor(rainChance > 50 ? COLOR_RAIN : COLOR_TEXT, COLOR_BG);
+  tft.drawString(String(rainChance) + "%", rainX + 25, 70);
+
+  // === HOURLY COLUMNS (show hours 8-14) ===
+  int displayCount = min(7, weather.hourlyCount - 8);
+  int margin = 8;
+  int availableWidth = 320 - (margin * 2);
+  int spacing = availableWidth / displayCount;
+  int startY = 130;
+
+  for (int i = 0; i < displayCount; i++) {
+    int hourIndex = i + 8;  // Start from hour 8
+    int x = margin + spacing / 2 + i * spacing;
+
+    // Hour label
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(2);
+    int h = weather.hourly[hourIndex].hour;
+
+    // Check if this hour is during daylight
+    struct tm sunriseTm, sunsetTm;
+    localtime_r(&weather.sunrise, &sunriseTm);
+    localtime_r(&weather.sunset, &sunsetTm);
+    bool hourIsDaytime = (h >= sunriseTm.tm_hour && h <= sunsetTm.tm_hour);
+    tft.setTextColor(hourIsDaytime ? COLOR_DAYTIME : COLOR_SUBTLE, COLOR_BG);
+
+    String ampm = (h < 12) ? "am" : "pm";
+    int displayH = h;
+    if (displayH == 0) displayH = 12;
+    else if (displayH > 12) displayH -= 12;
+    String hourStr = String(displayH) + ampm;
+    tft.drawString(hourStr, x, startY);
+
+    // Weather icon (smaller) - show moon at night
+    drawWeatherIcon(weather.hourly[hourIndex].weatherCode, x, startY + 27, 35, !hourIsDaytime);
+
+    // Temperature - color coded
+    tft.setTextFont(2);
+    tft.setTextColor(getTempColor(weather.hourly[hourIndex].temperature), COLOR_BG);
+    tft.drawString(String(weather.hourly[hourIndex].temperature, 0), x, startY + 55);
   }
 
   // Footer and screen indicator
@@ -1197,6 +1275,7 @@ void displaySettings() {
 void displayScreen(Screen screen) {
   switch (screen) {
     case SCREEN_HOURLY: displayHourlyForecast(); break;
+    case SCREEN_HOURLY2: displayHourlyForecast2(); break;
     case SCREEN_CONDITIONS: displayConditions(); break;
     case SCREEN_DAILY: displayDailyForecast(); break;
     case SCREEN_SETTINGS: displaySettings(); break;
