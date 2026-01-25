@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"pio run\")",
+      "Bash(cmd /c \"cd /d \"\"C:\\\\Users\\\\adzig\\\\Documents\\\\PlatformIO\\\\Projects\\\\Weather display\"\" && pio run\")",
+      "Bash(powershell -Command \"cd ''C:\\\\Users\\\\adzig\\\\Documents\\\\PlatformIO\\\\Projects\\\\Weather display''; pio run\")"
+    ]
+  }
+}
